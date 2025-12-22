@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for development
+  postgres:
+    image: postgres:18-alpine
+    container_name: configdb_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: configdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - config-dev-network
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c log_statement=all
+      -c log_duration=on
+
+  # Redis for development
+  redis:
+    image: redis:7-alpine
+    container_name: configdb_redis_dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - config-dev-network
+
+  # Configuration Management API for development
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: configmanagement_api_dev
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=configdb;Username=postgres;Password=postgres123
+      - Redis__ConnectionString=redis:6379
+      - JWT__SecretKey=dev-secret-key-for-development-only-not-for-production-32
+      - JWT__Issuer=ConfigManagementAPI-Dev
+      - JWT__Audience=ConfigManagementUsers-Dev
+      - Serilog__MinimumLevel=Debug
+      - Serilog__WriteTo__0__Name=Console
+      - Serilog__WriteTo__1__Name=File
+      - Serilog__WriteTo__1__Args__path=/app/logs/api-dev.log
+      - SignalR__EnableDetailedErrors=true
+      - RateLimit__Enabled=false  # Disable rate limiting in development
+    ports:
+      - "5000:80"
+      - "5001:443"
+      - "9229:9229"  # Debug port
+    volumes:
+      - ../src:/src  # Mount source code for hot reload
+      - api_dev_logs:/app/logs
+      - ${USERPROFILE}/.nuget/packages:/root/.nuget/packages  # Cache NuGet packages
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - config-dev-network
+    # Enable debugging
+    tty: true
+    stdin_open: true
+
+  # pgAdmin for database management (development only)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: configdb_pgadmin_dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@configmanagement.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - config-dev-network
+
+  # Redis Commander for Redis management (development only)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: configdb_redis_commander_dev
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - config-dev-network
+
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  api_dev_logs:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  config-dev-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

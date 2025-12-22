@@ -1,0 +1,66 @@
+# Development Dockerfile with hot reload support
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 80
+EXPOSE 443
+EXPOSE 9229  # Debug port
+
+# Install curl and other utilities for development
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    nano \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Development environment variables
+ENV ASPNETCORE_ENVIRONMENT=Development
+ENV ASPNETCORE_URLS=http://+:80;https://+:443
+
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy project files first for better Docker layer caching
+COPY ["src/ConfigurationManagement.Api/ConfigurationManagement.Api.csproj", "src/ConfigurationManagement.Api/"]
+COPY ["src/ConfigurationManagement.Application/ConfigurationManagement.Application.csproj", "src/ConfigurationManagement.Application/"]
+COPY ["src/ConfigurationManagement.Domain/ConfigurationManagement.Domain.csproj", "src/ConfigurationManagement.Domain/"]
+COPY ["src/ConfigurationManagement.Infrastructure/ConfigurationManagement.Infrastructure.csproj", "src/ConfigurationManagement.Infrastructure/"]
+
+# Restore packages
+RUN dotnet restore "src/ConfigurationManagement.Api/ConfigurationManagement.Api.csproj"
+
+# Copy source code
+COPY . .
+
+# Build the application
+WORKDIR "/src/src/ConfigurationManagement.Api"
+RUN dotnet build "ConfigurationManagement.Api.csproj" -c Debug -o /app/build
+
+# Publish stage
+FROM build AS publish
+RUN dotnet publish "ConfigurationManagement.Api.csproj" -c Debug -o /app/publish /p:UseAppHost=false
+
+# Final runtime image for development
+FROM base AS final
+WORKDIR /app
+
+# Copy the published application
+COPY --from=publish /app/publish .
+
+# Create development directories
+RUN mkdir -p /app/logs /app/tmp
+
+# Create non-root user (but allow root for development)
+RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
+
+# Expose debug port
+EXPOSE 9229
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD curl -f http://localhost/health || exit 1
+
+# Development entrypoint (can be overridden for debugging)
+USER appuser
+ENTRYPOINT ["dotnet", "ConfigurationManagement.Api.dll"]

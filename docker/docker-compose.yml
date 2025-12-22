@@ -1,0 +1,101 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:18-alpine
+    container_name: configdb_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: configdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5454:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - config-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d configdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: configdb_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - config-network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  # Configuration Management API
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: configmanagement_api
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=configdb;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres123}
+      - Redis__ConnectionString=redis:6379
+      - JWT__SecretKey=${JWT_SECRET_KEY:-your-super-secret-key-at-least-32-characters-long}
+      - JWT__Issuer=ConfigManagementAPI
+      - JWT__Audience=ConfigManagementUsers
+      - Serilog__MinimumLevel=Information
+      - Serilog__WriteTo__0__Name=Console
+      - Serilog__WriteTo__1__Name=File
+      - Serilog__WriteTo__1__Args__path=/app/logs/api.log
+      - SignalR__EnableDetailedErrors=false
+      - RateLimit__Enabled=true
+      - RateLimit__PermitLimit=100
+      - RateLimit__Window=60
+    ports:
+      - "5000:80"
+      - "5001:443"
+    volumes:
+      - api_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - config-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  api_logs:
+    driver: local
+
+networks:
+  config-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

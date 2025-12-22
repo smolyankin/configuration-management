@@ -1,0 +1,14 @@
+﻿namespace ConfigurationManagement.Application.Configurations.Dto;
+
+/// <summary>
+/// Пагинация.
+/// </summary>
+public class PaginationInfo
+{
+    public int PageNumber { get; set; }
+    public int PageSize { get; set; }
+    public long TotalItems { get; set; }
+    public int TotalPages => (int)Math.Ceiling((double)TotalItems / PageSize);
+    public bool HasNextPage => PageNumber < TotalPages;
+    public bool HasPreviousPage => PageNumber > 1;
+}

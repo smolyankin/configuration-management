@@ -33,7 +33,7 @@ REST API для управления пользовательскими конф
 
 1. Клонирование репозитория:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/smolyankin/configuration-management.git
    cd configuration-management
    ```
    
